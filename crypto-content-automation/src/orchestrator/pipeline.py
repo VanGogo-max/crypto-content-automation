@@ -1,5 +1,8 @@
 # Copyright 2026 GEORGI STOEDINOV VLADIMIROV
 # Licensed under the Apache License, Version 2.0
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
 
 from datetime import datetime
 from typing import Dict, Any, List
@@ -34,6 +37,7 @@ class ContentPipeline:
         verifier,
         compliance,
         editor,
+        watermark,
         language_router,
         publishers: List,
         auditor
@@ -42,6 +46,7 @@ class ContentPipeline:
         self.verifier = verifier
         self.compliance = compliance
         self.editor = editor
+        self.watermark = watermark
         self.language_router = language_router
         self.publishers = publishers
         self.auditor = auditor
@@ -64,19 +69,23 @@ class ContentPipeline:
             self.auditor.log("blocked_by_compliance", ctx)
             raise RuntimeError("Compliance check failed")
 
-        # 4. Edit & optimize (base language: EN)
+        # 4. Edit & optimize
         ctx.final_text = self.editor.edit(ctx.verified_text)
         ctx.compute_hash()
         self.auditor.log("edited", ctx)
 
-        # 5. Translate
+        # 5. Legal watermark
+        ctx.final_text = self.watermark.apply(ctx.final_text, ctx.content_hash)
+        self.auditor.log("watermarked", ctx)
+
+        # 6. Multilanguage
         ctx.translations = self.language_router.translate_all(
             ctx.final_text,
             languages
         )
         self.auditor.log("translated", ctx)
 
-        # 6. Publish per language
+        # 7. Publish
         for lang, text in ctx.translations.items():
             for publisher in self.publishers:
                 publisher.publish(text, ctx.metadata, language=lang)
@@ -85,4 +94,47 @@ class ContentPipeline:
         self.auditor.log("published", ctx)
 
         return ctx
+
+
+# ---------- Abstract Interfaces ----------
+
+class BaseGenerator:
+    def generate(self, topic: str) -> str:
+        raise NotImplementedError
+
+
+class BaseVerifier:
+    def verify(self, text: str):
+        """Return (verified_text, sources[])"""
+        raise NotImplementedError
+
+
+class BaseCompliance:
+    def validate(self, text: str) -> bool:
+        raise NotImplementedError
+
+
+class BaseEditor:
+    def edit(self, text: str) -> str:
+        raise NotImplementedError
+
+
+class BaseWatermark:
+    def apply(self, text: str, content_hash: str) -> str:
+        raise NotImplementedError
+
+
+class BaseLanguageRouter:
+    def translate_all(self, text: str, languages: List[str]) -> Dict[str, str]:
+        raise NotImplementedError
+
+
+class BasePublisher:
+    def publish(self, text: str, metadata: Dict[str, Any], language: str):
+        raise NotImplementedError
+
+
+class BaseAuditor:
+    def log(self, stage: str, ctx: PipelineContext):
+        raise NotImplementedError
         
