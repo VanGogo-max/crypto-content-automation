@@ -1,152 +1,158 @@
-# Copyright 2026 GEORGI STOEDINOV VLADIMIROV
-# Licensed under the Apache License, Version 2.0
-# You may not use this file except in compliance with the License.
+# File: orchestrator/pipeline.py
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-from datetime import datetime
-from typing import Dict, Any, List
+"""
+orchestrator/pipeline.py
+
+Enterprise-grade orchestration pipeline for:
+- AI content generation
+- Fact verification with sources
+- Regulatory compliance filtering (MiCA / SEC / Ads)
+- Editorial + SEO optimization
+- Publishing (Blogger, Telegram)
+- Audit logging
+- SHA256 notarization
+- On-chain proof on Ethereum Sepolia
+- Fail-safe and traceable execution
+
+Author: Crypto Content Automation System
+License: Apache 2.0
+"""
+
+import os
 import hashlib
+import logging
+from datetime import datetime
+from typing import Dict, Any
 
+from generator.ai_generator import AIGenerator
+from verifier.fact_checker import FactChecker
+from compliance.regulatory_filter import RegulatoryFilter
+from editor.content_editor import ContentEditor
+from publisher.blogger_publisher import BloggerPublisher
+from publisher.telegram_publisher import TelegramPublisher
+from audit.audit_logger import AuditLogger
+from legal.hash_notary import HashNotary
+from legal.ethereum_client import EthereumClient
 
-class PipelineContext:
-    def __init__(self, topic: str):
-        self.topic = topic
-        self.generated_text = None
-        self.verified_text = None
-        self.compliance_passed = False
-        self.final_text = None
-        self.translations: Dict[str, str] = {}
-        self.metadata: Dict[str, Any] = {}
-        self.content_hash = None
-        self.created_at = datetime.utcnow()
-        self.published_at = None
-
-    def compute_hash(self):
-        if self.final_text:
-            self.content_hash = hashlib.sha256(
-                self.final_text.encode("utf-8")
-            ).hexdigest()
+class PipelineError(Exception):
+    pass
 
 
 class ContentPipeline:
+    def __init__(self):
+        self._load_env()
+        self._init_logging()
+        self._init_modules()
 
-    def __init__(
-        self,
-        generator,
-        verifier,
-        compliance,
-        editor,
-        watermark,
-        language_router,
-        blockchain_anchor,
-        publishers: List,
-        auditor
-    ):
-        self.generator = generator
-        self.verifier = verifier
-        self.compliance = compliance
-        self.editor = editor
-        self.watermark = watermark
-        self.language_router = language_router
-        self.blockchain_anchor = blockchain_anchor
-        self.publishers = publishers
-        self.auditor = auditor
+    def _load_env(self):
+        from dotenv import load_dotenv
+        load_dotenv()
 
-    def run(self, topic: str, languages: List[str] = ["en"]) -> PipelineContext:
-        ctx = PipelineContext(topic)
+        self.eth_rpc_url = os.getenv("ETH_RPC_URL")
+        self.eth_private_key = os.getenv("ETH_PRIVATE_KEY")
+        self.eth_chain = os.getenv("ETH_CHAIN", "sepolia")
 
-        # 1. Generate
-        ctx.generated_text = self.generator.generate(topic)
-        self.auditor.log("generated", ctx)
+        if not self.eth_rpc_url or not self.eth_private_key:
+            raise EnvironmentError("Missing ETH_RPC_URL or ETH_PRIVATE_KEY in .env")
 
-        # 2. Fact check
-        ctx.verified_text, sources = self.verifier.verify(ctx.generated_text)
-        ctx.metadata["sources"] = sources
-        self.auditor.log("verified", ctx)
-
-        # 3. Compliance
-        ctx.compliance_passed = self.compliance.validate(ctx.verified_text)
-        if not ctx.compliance_passed:
-            self.auditor.log("blocked_by_compliance", ctx)
-            raise RuntimeError("Compliance check failed")
-
-        # 4. Edit
-        ctx.final_text = self.editor.edit(ctx.verified_text)
-        ctx.compute_hash()
-        self.auditor.log("edited", ctx)
-
-        # 5. Legal watermark
-        ctx.final_text = self.watermark.apply(ctx.final_text, ctx.content_hash)
-        self.auditor.log("watermarked", ctx)
-
-        # 6. Blockchain anchoring (Layer 10)
-        ctx.metadata["blockchain_proof"] = self.blockchain_anchor.anchor(ctx.content_hash)
-        self.auditor.log("anchored_on_chain", ctx)
-
-        # 7. Multilanguage
-        ctx.translations = self.language_router.translate_all(
-            ctx.final_text,
-            languages
+    def _init_logging(self):
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
         )
-        self.auditor.log("translated", ctx)
+        self.logger = logging.getLogger("ContentPipeline")
 
-        # 8. Publish
-        for lang, text in ctx.translations.items():
-            for publisher in self.publishers:
-                publisher.publish(text, ctx.metadata, language=lang)
+    def _init_modules(self):
+        self.generator = AIGenerator()
+        self.verifier = FactChecker()
+        self.compliance = RegulatoryFilter()
+        self.editor = ContentEditor()
+        self.blogger = BloggerPublisher()
+        self.telegram = TelegramPublisher()
+        self.audit = AuditLogger()
+        self.notary = HashNotary()
+        self.eth_client = EthereumClient(
+            rpc_url=self.eth_rpc_url,
+            private_key=self.eth_private_key,
+            network=self.eth_chain
+        )
 
-        ctx.published_at = datetime.utcnow()
-        self.auditor.log("published", ctx)
+    def run(self, topic: str) -> Dict[str, Any]:
+        trace_id = hashlib.sha256(f"{topic}{datetime.utcnow()}".encode()).hexdigest()[:16]
+        self.logger.info(f"Starting pipeline | Trace ID: {trace_id}")
 
-        return ctx
+        try:
+            # 1. Generate
+            raw_content = self.generator.generate(topic)
+            self.audit.log_step(trace_id, "generation", raw_content)
+
+            # 2. Verify facts
+            verified_content, sources = self.verifier.verify(raw_content)
+            self.audit.log_step(trace_id, "verification", {"content": verified_content, "sources": sources})
+
+            # 3. Compliance filter
+            compliant_content = self.compliance.filter(verified_content)
+            self.audit.log_step(trace_id, "compliance", compliant_content)
+
+            # 4. Edit + SEO + watermark
+            final_content = self.editor.edit(compliant_content, watermark=True)
+            self.audit.log_step(trace_id, "editorial", final_content)
+
+            # 5. Hash notarization
+            sha256_hash = self.notary.hash(final_content)
+            timestamp = datetime.utcnow().isoformat()
+            self.audit.log_step(trace_id, "hash", {"sha256": sha256_hash, "timestamp": timestamp})
+
+            # 6. On-chain notarization (Sepolia)
+            tx_hash = self.eth_client.store_hash(sha256_hash, timestamp)
+            self.audit.log_step(trace_id, "ethereum_tx", {"tx_hash": tx_hash})
+
+            # 7. Publish
+            blogger_url = self.blogger.publish(final_content)
+            telegram_msg_id = self.telegram.publish(final_content)
+
+            self.audit.log_step(trace_id, "publish", {
+                "blogger_url": blogger_url,
+                "telegram_id": telegram_msg_id
+            })
+
+            # 8. Final audit record
+            result = {
+                "trace_id": trace_id,
+                "topic": topic,
+                "sha256": sha256_hash,
+                "ethereum_tx": tx_hash,
+                "blogger_url": blogger_url,
+                "telegram_id": telegram_msg_id,
+                "sources": sources,
+                "timestamp": timestamp,
+                "network": self.eth_chain
+            }
+
+            self.audit.finalize(trace_id, result)
+            self.logger.info(f"Pipeline completed successfully | Trace ID: {trace_id}")
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Pipeline failure | Trace ID: {trace_id} | Error: {str(e)}", exc_info=True)
+            self.audit.log_error(trace_id, str(e))
+            raise PipelineError(f"Pipeline execution failed: {e}") from e
 
 
-# ---------- Abstract Interfaces ----------
-
-class BaseGenerator:
-    def generate(self, topic: str) -> str:
-        raise NotImplementedError
-
-
-class BaseVerifier:
-    def verify(self, text: str):
-        """Return (verified_text, sources[])"""
-        raise NotImplementedError
-
-
-class BaseCompliance:
-    def validate(self, text: str) -> bool:
-        raise NotImplementedError
-
-
-class BaseEditor:
-    def edit(self, text: str) -> str:
-        raise NotImplementedError
-
-
-class BaseWatermark:
-    def apply(self, text: str, content_hash: str) -> str:
-        raise NotImplementedError
-
-
-class BaseLanguageRouter:
-    def translate_all(self, text: str, languages: List[str]) -> Dict[str, str]:
-        raise NotImplementedError
-
-
-class BaseBlockchainAnchor:
-    def anchor(self, content_hash: str) -> Dict[str, Any]:
-        raise NotImplementedError
-
-
-class BasePublisher:
-    def publish(self, text: str, metadata: Dict[str, Any], language: str):
-        raise NotImplementedError
-
-
-class BaseAuditor:
-    def log(self, stage: str, ctx: PipelineContext):
-        raise NotImplementedError
-        
-        
+if __name__ == "__main__":
+    pipeline = ContentPipeline()
+    output = pipeline.run("Future of On-Chain Identity and Zero-Knowledge Proofs")
+    print(output)
+            
