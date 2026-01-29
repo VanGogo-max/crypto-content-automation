@@ -39,6 +39,7 @@ class ContentPipeline:
         editor,
         watermark,
         language_router,
+        blockchain_anchor,
         publishers: List,
         auditor
     ):
@@ -48,6 +49,7 @@ class ContentPipeline:
         self.editor = editor
         self.watermark = watermark
         self.language_router = language_router
+        self.blockchain_anchor = blockchain_anchor
         self.publishers = publishers
         self.auditor = auditor
 
@@ -69,7 +71,7 @@ class ContentPipeline:
             self.auditor.log("blocked_by_compliance", ctx)
             raise RuntimeError("Compliance check failed")
 
-        # 4. Edit & optimize
+        # 4. Edit
         ctx.final_text = self.editor.edit(ctx.verified_text)
         ctx.compute_hash()
         self.auditor.log("edited", ctx)
@@ -78,14 +80,18 @@ class ContentPipeline:
         ctx.final_text = self.watermark.apply(ctx.final_text, ctx.content_hash)
         self.auditor.log("watermarked", ctx)
 
-        # 6. Multilanguage
+        # 6. Blockchain anchoring (Layer 10)
+        ctx.metadata["blockchain_proof"] = self.blockchain_anchor.anchor(ctx.content_hash)
+        self.auditor.log("anchored_on_chain", ctx)
+
+        # 7. Multilanguage
         ctx.translations = self.language_router.translate_all(
             ctx.final_text,
             languages
         )
         self.auditor.log("translated", ctx)
 
-        # 7. Publish
+        # 8. Publish
         for lang, text in ctx.translations.items():
             for publisher in self.publishers:
                 publisher.publish(text, ctx.metadata, language=lang)
@@ -129,6 +135,11 @@ class BaseLanguageRouter:
         raise NotImplementedError
 
 
+class BaseBlockchainAnchor:
+    def anchor(self, content_hash: str) -> Dict[str, Any]:
+        raise NotImplementedError
+
+
 class BasePublisher:
     def publish(self, text: str, metadata: Dict[str, Any], language: str):
         raise NotImplementedError
@@ -137,4 +148,5 @@ class BasePublisher:
 class BaseAuditor:
     def log(self, stage: str, ctx: PipelineContext):
         raise NotImplementedError
+        
         
